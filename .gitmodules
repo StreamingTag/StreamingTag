@@ -1,3 +1,6 @@
 [submodule "StreamingTag-FFmpeg"]
 	path = StreamingTag-FFmpeg
 	url = git@github.com:jxqhhh/StreamingTag-FFmpeg.git
+[submodule "StreamingTag-gsl"]
+	path = StreamingTag-gsl
+	url = git@github.com:jxqhhh/StreamingTag-gsl.git
