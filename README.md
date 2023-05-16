@@ -16,10 +16,10 @@ If you use our work for research, please cite it.
 
 ## Project structure
 ```
-./StreamingTag                 # Python: implementing the slidingDTW algorithm & watermark extraction
+./StreamingTag              # Python: implementing the slidingDTW algorithm & watermark extraction
 ./third_party
-├── StreamingTag-FFmpeg                 # C: the customized FFmpeg with out watermarking scheme implemented as its filter
-├── StreamingTag-gsl                 # C: the customized gsl supporting Discrete Wavelet Transfrom (DWT) with a specified level
+├── StreamingTag-FFmpeg     # C: the customized FFmpeg with out watermarking scheme implemented as its filter
+├── StreamingTag-gsl        # C: the customized gsl supporting 3-level Discrete Wavelet Transfrom (DWT)
 ```
 
 ## Prerequisites
