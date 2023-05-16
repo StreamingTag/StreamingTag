@@ -14,8 +14,8 @@ class FrameState(Enum):
     unchecked = 1
     matched = 2
     dropped = 3
-    duplicated = 4
-    inserted = 5
+    inserted = 4
+    skipped = 5
 
 def cropRecordedFrame(originalFrame, recordedFrame):
     originalHeight, originalWidth, _ = originalFrame.shape
@@ -86,25 +86,13 @@ class VideoCapture:
         self.framesWindow = self.framesWindow[1:]
         return True, frame
 
-def isMismatch(original_frame, recorded_frame, candidate_original_frames, candidate_recorded_frames, threshold=0.08):
+def isMismatch(original_frame, recorded_frame, candidate_original_frames, candidate_recorded_frames):
     diffVal = diff(original_frame, recorded_frame)
-    norm_original = diff(original_frame, np.zeros(original_frame.shape, dtype=original_frame.dtype))
-    norm_recorded = diff(recorded_frame, np.zeros(recorded_frame.shape, dtype=recorded_frame.dtype))
-    '''
-    if diffVal < threshold * norm_original and diffVal < threshold * norm_recorded:
-        print("Match")
-        return False
-    else:
-        print(f"[Warning] diffVal/norm_original={diffVal/norm_original} diffVal/norm_recorded={diffVal/norm_recorded}")
-    '''
     for candidate in candidate_original_frames:
-        print(f"candidate - {candidate.shape}")
         if diff(candidate, recorded_frame) < diffVal:
-            print(f"[Mismatch]")
             return True
     for candidate in candidate_recorded_frames:
         if diff(original_frame, candidate) < diffVal:
-            print(f"[Mismatch]")
             return True
     return False
 
@@ -113,9 +101,9 @@ def slidingDTW(RecordedVideoCapture, OriginalVideoCapture, isMismatchHalfWindowL
     epoch = 0
     result = {}
     invResult = {}
+    debug_log = open("debug.log", "w")
     def setMatchedStateForOriginalFrame(original_frame, recorded_frame):
-        print("setMatchedStateForOriginalFrame")
-        print(f"index={original_frame.index} {recorded_frame.index}")
+        print(f"setMatchedStateForOriginalFrame: frame_index={original_frame.index}")
         if original_frame.state != FrameState.matched:
             original_frame.state = FrameState.matched
             original_frame.matchedIndex = recorded_frame.index
@@ -125,6 +113,9 @@ def slidingDTW(RecordedVideoCapture, OriginalVideoCapture, isMismatchHalfWindowL
             if dist < original_frame.dist:
                 original_frame.dist = dist
                 original_frame.matchedIndex = recorded_frame.index
+
+    
+
     while True:
         epoch += 1
         lastRecordedWindow = []
@@ -148,25 +139,28 @@ def slidingDTW(RecordedVideoCapture, OriginalVideoCapture, isMismatchHalfWindowL
         while len(OriginalVideoCapture.framesWindow) <= OriginalVideoCapture.windowLength:
             if not OriginalVideoCapture.update(remove_first=False):
                 break
-        windowLength = min(len(RecordedVideoCapture.framesWindow), len(OriginalVideoCapture.framesWindow))
-        print(f"Windowlength={windowLength} last_epoch={last_epoch}")
         # match
-        if windowLength == 0:
+        if len(OriginalVideoCapture.framesWindow) == 0 or len(RecordedVideoCapture.framesWindow) == 0:
             assert last_epoch
             pass
         else:
             # run dtw:
             original_frames = []
-            for original_frame in OriginalVideoCapture.framesWindow:
+            for original_frame in OriginalVideoCapture.framesWindow[:OriginalVideoCapture.windowLength]:
                 original_frames.append(np.expand_dims(original_frame.frame, 0))
+                # debug
+                # cv2.imwrite(f"{original_frame.index}.png", original_frame.frame)
             recorded_frames = []
-            for recorded_frame in RecordedVideoCapture.framesWindow:
+            for recorded_frame in RecordedVideoCapture.framesWindow[:RecordedVideoCapture.windowLength]:
                 recorded_frame = cropRecordedFrame(original_frames[0][0], recorded_frame.frame)
                 recorded_frames.append(np.expand_dims(recorded_frame, 0))
+                # debug
+                # index = recorded_frame.index+RecordedVideoCapture.offset
+                # cv2.imwrite(f"{index}.png", recorded_frame)
             original_frames = np.concatenate(original_frames, axis=0)
             recorded_frames = np.concatenate(recorded_frames, axis=0)
-            print(original_frames.shape)
-            print(recorded_frames.shape)
+            #print(original_frames.shape)
+            #print(recorded_frames.shape)
             distance, path = dtw(original_frames, recorded_frames, dist=diff)
             # pre-fetch for judging mismatch
             for _ in range(isMismatchHalfWindowLength):
@@ -184,6 +178,8 @@ def slidingDTW(RecordedVideoCapture, OriginalVideoCapture, isMismatchHalfWindowL
                     RecordedVideoCapture.framesWindow[pair[1]].matchedIndex = OriginalVideoCapture.framesWindow[pair[0]].index
                 else:
                     print(f"Mismatch between original frame ({OriginalVideoCapture.framesWindow[pair[0]].index+OriginalVideoCapture.offset}.png) and recorded frame ({RecordedVideoCapture.framesWindow[pair[1]].index+RecordedVideoCapture.offset}.png)")
+                    debug_log.write(f"Mismatch: original/{OriginalVideoCapture.framesWindow[pair[0]].index+OriginalVideoCapture.offset}.png recorded/{RecordedVideoCapture.framesWindow[pair[1]].index+RecordedVideoCapture.offset}.png\n")
+                    debug_log.flush()
             for idx, frame in enumerate(OriginalVideoCapture.framesWindow):
                 if frame.state != FrameState.matched:
                     mismatchedOriginalFramesIndices.append(idx)
@@ -199,6 +195,8 @@ def slidingDTW(RecordedVideoCapture, OriginalVideoCapture, isMismatchHalfWindowL
                     OriginalVideoCapture.framesWindow[idx].state = FrameState.unchecked
                 else:
                     OriginalVideoCapture.framesWindow[idx].state = FrameState.dropped
+            if startIdx == -1:
+                OriginalVideoCapture.framesWindow[0].state = FrameState.skipped
             startIdx = len(RecordedVideoCapture.framesWindow) - 1
             while startIdx in mismatchedRecordedFramesIndices:
                 startIdx -= 1
@@ -208,12 +206,16 @@ def slidingDTW(RecordedVideoCapture, OriginalVideoCapture, isMismatchHalfWindowL
                     RecordedVideoCapture.framesWindow[idx].state = FrameState.unchecked
                 else:
                     RecordedVideoCapture.framesWindow[idx].state = FrameState.inserted
+            if startIdx == -1:
+                RecordedVideoCapture.framesWindow[0].state = FrameState.skipped
         # print result
         print(f"[Epoch {epoch}]")
         for frame in OriginalVideoCapture.framesWindow:
             if frame.state == FrameState.matched:
-                print(f"frame index in {RecordedVideoCapture.videoFn}: {frame.matchedIndex} ({frame.matchedIndex+1+RecordedVideoCapture.offset}.png) matched index in {OriginalVideoCapture.videoFn}: {frame.index} ({frame.index+1+OriginalVideoCapture.offset}.png)")
+                print(f"frame index in {RecordedVideoCapture.videoFn}: {frame.matchedIndex} ({frame.matchedIndex+RecordedVideoCapture.offset}.png) matched index in {OriginalVideoCapture.videoFn}: {frame.index} ({frame.index+OriginalVideoCapture.offset}.png)")
                 result[frame.matchedIndex] = frame.index
                 invResult[frame.index] = frame.matchedIndex
+                debug_log.write(f"Match: original/{frame.index+OriginalVideoCapture.offset}.png recorded/{frame.matchedIndex+RecordedVideoCapture.offset}.png\n")
+                debug_log.flush()
         if last_epoch:
             return result, invResult

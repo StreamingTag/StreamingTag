@@ -1,42 +1,82 @@
-## Environment configuration
+# StreamingTag (MobiCom'22)
 
-Use python 3.9 and install dependencies as follows:
+This is an official Github repository for the MobiCom paper "StreamingTag: A Scalable Piracy Tracking Solution for Mobile Streaming Services." This project is built upon FFmpeg, GNU Scientific Library (GSL), and consists of C/Python.
+[[Project homepage]](https://streamingtag.github.io/) [[Paper]](https://dl.acm.org/doi/10.1145/3495243.3560521)
+
+If you use our work for research, please cite it.
 ```
+@inproceedings{streamingtag,
+  title={StreamingTag: A Scalable Piracy Tracking Solution for Mobile Streaming Services},
+  author={Jin, Xinqi and Dang, Fan and Fu, Qi-An and Li, Lingkun and Peng, Guanyan and Chen, Xinlei and Liu, Kebin and Liu, Yunhao},
+  booktitle={Proceedings of the 28th Annual International Conference on Mobile Computing and Networking},
+  pages={596--608},
+  year={2022}
+}
+```
+
+## Project structure
+```
+./StreamingTag                 # Python: implementing the slidingDTW algorithm & watermark extraction
+./third_party
+├── StreamingTag-FFmpeg                 # C: the customized FFmpeg with out watermarking scheme implemented as its filter
+├── StreamingTag-gsl                 # C: the customized gsl supporting Discrete Wavelet Transfrom (DWT) with a specified level
+```
+
+## Prerequisites
+
+* OS: Ubuntu (we test our implementation on Ubuntu 22.04)
+* Python 3.9
+
+## Guide
+We show how to measure the robustness against screen recording-based NR attack in this guide.
+
+### 1. Setup
+* Install the required Python packages
+```
+cd ${PROJECT_DIR}/StreamingTag
 pip install -r requirements.txt
 ```
+* Follow the [guide](third_party/StreamingTag-gsl/INSTALL) to install the customized FFmpeg
+* Follow the [guide](third_party/StreamingTag-FFmpeg/README.md) to install the customized FFmpeg
 
----
-
-## Measuring StreamingTag's security under the NR attack
-
-### Step 1: Pre-processing the pirated video video
-
+### 2. Embed a single bit into each segment of a video
+* To embed a bit $0$:
 ```
-ffmpeg -i [recorded_video_filename] -vf fps=fps=[frame_rate_of_original_video] [prepared_recorded_video_filename]
+ffmpeg -i ${original_video_path} -vf watermark=keyFrameInterval=${frame_rate_of_original_video}:numEmbeddedFrames=${numEmbeddedFramesPerSegment}:strength=${strength}:implicitSVD=1:size=512:mode=3:outputFn=embeddingPosition.txt ${watermarked_video_path}
 ```
-
-### Step 2: Determining the value of `offset`
-
+* Alternatively, to embed a bit $1$:
 ```
-mkdir -p original
-ffmpeg -i [origin_video_filename] original/%08d.png
-mkdir -p prepared_recorded
-ffmpeg -i [prepared_recorded_video_filename] prepared_recorded/%08d.png
+ffmpeg -i ${original_video_path} -vf watermark=keyFrameInterval=${frame_rate_of_original_video}:numEmbeddedFrames=${numEmbeddedFramesPerSegment}:strength=${strength}:implicitSVD=1:size=512:mode=3:outputFn=embeddingPosition.txt ${watermarked_video_path}
 ```
 
-Manually check how many more frames the beginning of the video [prepared_recorded_video_filename] has than the original video [origin_video_filename]. The number of extra frames can be set to [offset]. The above two calls of `ffmpeg` can be terminated early to save time and storage space, as long as the output of the calls is enough for you to find out the appropriate value of [offset].
+Note that ${numEmbeddedFramesPerSegment} corresponds to $n_e$ in the paper, and ${strength} equals to $1\pm\alpha$ (where $\alpha$ denotes the watermark strength in the paper). 
+
+### 3. Generate the pirated video
+
+Copy the watermarked video to a phone, play it on the phone in the full-screen mode, and record it via some software-based screen recorder to generate the pirated copy. Then, copy the recorded video to the computer.
+
+### 4. Pre-process the pirated video (Optional)
+We mainly test the case where the frame rate of the pirated video equals to that of the watermarked video, so we recommend to keep the frame rate of the recorded video the same as that of the original video:
+```
+ffmpeg -i ${recorded_video_path} -vf fps=fps=${frame_rate_of_original_video} ${prepared_recorded_video_path}
+rm ${recorded_video_path}
+mv ${prepared_recorded_video_path} ${recorded_video_path}
+```
 
 
-### Step 3: Conducting the measurement
 
-Optional: applying modification
+### 5. Determine the value of `offset`
+* First, convert the first 200 frames of the pirated/original video to images. Use a larger value for the parameter '-l' if necessary.
 ```
-ffmpeg -i [prepared_recorded_video_filename] -vf scale=w=0.75*iw:h=0.75*ih [output_filename]
-ffmpeg -i [prepared_recorded_video_filename] -vf scale=w=1.25*iw:h=1.25*ih [output_filename]
-ffmpeg -i [prepared_recorded_video_filename] -vf noise=alls=10*allf=0 noise/[output_filename]
-ffmpeg -i [prepared_recorded_video_filename] -vf median=radius=7:radiusV=7 mf15/[output_filename]
+cd StreamingTag
+python video-to-images.py -p ${original_video_folder} -v ${original_video_filename} -i image -l 200
+python video-to-images.py -p ${recorded_video_folder} -v ${recorded_video_filename} -i image -l 200
 ```
+* Second, manually check how many more frames the beginning of the pirated video has than the original video.
 
+
+### 6. Conduct the measurement
 ```
-python sync.py -o [origin_video_filename] -r [prepared_recorded_video_filename] --offset [offset]
+  python main.py -o ${original_video_path} -r ${recorded_video_path} --offset ${offset} --owl 8 --rwl 8 -b ${embedded_bit} --ne ${numEmbeddedFramesPerSegment} -s 512 -f embeddingPosition.txt  
 ```
+The slidingDTW algorithm is used in this measurement.
